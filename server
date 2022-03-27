@@ -1,0 +1,196 @@
+#undef UNICODE
+
+#define WIN32_LEAN_AND_MEAN
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <Mmsystem.h>
+
+// Need to link with Ws2_32.lib
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+
+#define DEFAULT_BUFLEN 1024
+#define DEFAULT_PORT "12345" //port numder
+
+//global variables for general purposes
+int iResult;
+int iSendResult;
+//buffer's variables
+char recvbuf[DEFAULT_BUFLEN];
+int recvbuflen = DEFAULT_BUFLEN;
+char sendbuf[DEFAULT_BUFLEN];
+int sendbuflen = DEFAULT_BUFLEN;
+//thread's prototype
+DWORD WINAPI thread_to_connection(LPVOID lpParameter);
+//thread's variables
+DWORD dwThread;
+HANDLE hThread;
+int main(void)
+{
+    WSADATA wsaData;
+    SOCKET ListenSocket = INVALID_SOCKET;
+    SOCKET ClientSocket = INVALID_SOCKET;
+    struct addrinfo* result = NULL;
+    struct addrinfo hints;
+
+    // Initialize Winsock
+    iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (iResult != 0) 
+        {
+            printf("WSAStartup failed with error: %d\n", iResult);
+            return 1;
+        }
+    
+    ZeroMemory(&hints, sizeof(hints));
+    //set addrinfo members
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
+
+    // Resolve the server address and port
+    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
+        if (iResult != 0) 
+        {
+            printf("getaddrinfo failed with error: %d\n", iResult);
+            WSACleanup();
+            return 1;
+        }
+
+    // Create a SOCKET for connecting to server
+    ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+        if (ListenSocket == INVALID_SOCKET) 
+        {
+            printf("socket failed with error: %ld\n", WSAGetLastError());
+            freeaddrinfo(result);
+            WSACleanup();
+            return 1;
+        }
+        else
+        {
+            printf("Createing a socket..\n");
+        }
+
+    // binding local address and port with a socket
+    iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+        if (iResult == SOCKET_ERROR) 
+        {
+            printf("bind failed with error: %d\n", WSAGetLastError());
+            freeaddrinfo(result);
+            closesocket(ListenSocket);
+            WSACleanup();
+            return 1;
+        }
+        else 
+        {
+            printf("binding local address and port with a socket..\n");
+            //done useing addrinfo Structure 
+            freeaddrinfo(result);
+        }
+
+    
+
+    //listen on IP address and port for incoming connection requests
+    iResult = listen(ListenSocket, SOMAXCONN);
+        if (iResult == SOCKET_ERROR) 
+        {
+            printf("listen failed with error: %d\n", WSAGetLastError());
+            closesocket(ListenSocket);
+            WSACleanup();
+            return 1;
+        }
+        else
+        {
+        printf("listen on IP address and port for incoming connection requests..\n");
+        }
+
+    while (1)
+    {
+        // (loop) Accept a client socket and pass the accepted client socket to a thread
+        ClientSocket = accept(ListenSocket, NULL, NULL);
+            if (ClientSocket == INVALID_SOCKET) 
+            {
+                printf("accept failed with error: %d\n", WSAGetLastError());
+                closesocket(ListenSocket);
+                WSACleanup();
+                return 1;
+            }
+        hThread = CreateThread(0, 0, thread_to_connection, (LPVOID)ClientSocket, 0, &dwThread);
+    }
+    // No longer need server socket
+    closesocket(ListenSocket);
+
+    // shutdown the connection since we're done
+    iResult = shutdown(ClientSocket, SD_BOTH);
+        if (iResult == SOCKET_ERROR)
+        {
+            printf("shutdown failed with error: %d\n", WSAGetLastError());
+            closesocket(ClientSocket);
+            WSACleanup();
+            return 1;
+        }
+        else 
+        {
+            printf("server shutdown the connection");
+        }
+
+    // cleanup
+    closesocket(ClientSocket);
+    WSACleanup();
+
+    return 0;
+}
+
+DWORD WINAPI thread_to_connection(LPVOID lpParameter)
+{
+    printf("new connection! thread id %d joined\n", GetCurrentThreadId());
+    while (iResult = recv(lpParameter, recvbuf, recvbuflen, 0))
+    {
+        SOCKET ClientSocket = (SOCKET)lpParameter;
+        //Validate the receive data function
+            if (iResult > 0) 
+            {
+                printf("[from thread id %d] - %s\n", GetCurrentThreadId(), recvbuf);
+            }
+            else if (iResult == 0) 
+            {
+                printf("[from thread id %d] - send 'QUIT' Connection is closing...\n", GetCurrentThreadId());
+            }
+            else
+            {
+                printf("recv failed with error: %d\n", WSAGetLastError());
+                // try receive data function again - if fail break
+                iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
+                if (iResult > 0)
+                {
+                    printf("[from thread id %d] - %s\n", GetCurrentThreadId(), recvbuf);
+                }
+                else 
+                {
+                    break;
+                }
+            }
+            
+        printf("enter message to thread id %d:\n", GetCurrentThreadId());
+        fgets(sendbuf, 1024, stdin);
+            // if "QUIT" is sent close server
+            if (strcmp(sendbuf, "QUIT\n") == 0)
+            {
+                printf("close server connection..\n");
+                closesocket(ClientSocket);
+                WSACleanup();
+                return 1;
+            }
+        //send data function
+        iSendResult = send(ClientSocket, sendbuf, sendbuflen, 0);
+            if (iSendResult == SOCKET_ERROR) 
+            {
+                printf("send failed with error: %d to thread id %d\n", WSAGetLastError(),GetCurrentThreadId());
+            }
+    }
+
+}
